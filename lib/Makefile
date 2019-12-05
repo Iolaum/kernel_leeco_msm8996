@@ -1,6 +1,13 @@
 #
 # Makefile for some libs needed in the kernel.
 #
+CFLAGS_libcrc32c.o := -fno-strict-aliasing
+CFLAGS_nlattr.o := -fno-strict-aliasing
+CFLAGS_klist.o := -fno-strict-aliasing
+CFLAGS_kobject_uevent.o := -fno-strict-aliasing
+CFLAGS_radix-tree.o := -fno-strict-aliasing
+CFLAGS_vsprintf.o := -fno-strict-aliasing
+CFLAGS_dynamic_debug.o := -fno-strict-aliasing
 
 ifdef CONFIG_FUNCTION_TRACER
 ORIG_CFLAGS := $(KBUILD_CFLAGS)
@@ -13,7 +20,7 @@ lib-y := ctype.o string.o vsprintf.o cmdline.o \
 	 sha1.o md5.o irq_regs.o argv_split.o \
 	 proportions.o flex_proportions.o ratelimit.o show_mem.o \
 	 is_single_threaded.o plist.o decompress.o kobject_uevent.o \
-	 earlycpio.o
+	 earlycpio.o memcopy.o
 
 obj-$(CONFIG_ARCH_HAS_DEBUG_STRICT_USER_COPY_CHECKS) += usercopy.o
 lib-$(CONFIG_MMU) += ioremap.o

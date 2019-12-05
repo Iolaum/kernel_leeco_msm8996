@@ -82,6 +82,12 @@
  */
 #define MDP_TIME_PERIOD_CALC_FPS_US	1000000
 
+#define MDSS_BRIGHT_TO_BL_DIM(out, v) do {\
+			out = (12*v*v+1393*v+3060)/4465;\
+			} while (0)
+bool backlight_dimmer = false;
+module_param(backlight_dimmer, bool, 0755);
+
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
 
@@ -253,7 +259,7 @@ static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 		mfd->no_update.ref_count++;
 		mutex_unlock(&mfd->no_update.lock);
 		ret = wait_for_completion_interruptible_timeout(
-						&mfd->no_update.comp, 4 * HZ);
+						&mfd->no_update.comp, msecs_to_jiffies(4000));
 		mutex_lock(&mfd->no_update.lock);
 		mfd->no_update.ref_count--;
 		mutex_unlock(&mfd->no_update.lock);
@@ -262,7 +268,7 @@ static int mdss_fb_notify_update(struct msm_fb_data_type *mfd,
 		if (mdss_fb_is_power_on(mfd)) {
 			reinit_completion(&mfd->power_off_comp);
 			ret = wait_for_completion_interruptible_timeout(
-						&mfd->power_off_comp, 1 * HZ);
+						&mfd->power_off_comp, msecs_to_jiffies(1000));
 		}
 	}
 
@@ -289,10 +295,14 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 	if (value > mfd->panel_info->brightness_max)
 		value = mfd->panel_info->brightness_max;
 
-	/* This maps android backlight level 0 to 255 into
-	   driver backlight level 0 to bl_max with rounding */
-	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
-				mfd->panel_info->brightness_max);
+	if (backlight_dimmer) {
+		MDSS_BRIGHT_TO_BL_DIM(bl_lvl, value);
+	} else {
+		/* This maps android backlight level 0 to 255 into
+		   driver backlight level 0 to bl_max with rounding */
+		MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
+					mfd->panel_info->brightness_max);
+	}
 
 	if (!bl_lvl && value)
 		bl_lvl = 1;
@@ -1482,7 +1492,8 @@ static int mdss_fb_suspend_sub(struct msm_fb_data_type *mfd)
 		 * on, but turn off all interface clocks.
 		 */
 		if (mdss_fb_is_power_on(mfd)) {
-			ret = mdss_fb_blank_sub(BLANK_FLAG_ULP, mfd->fbi,
+            int flag = mfd->panel_info->type == MIPI_CMD_PANEL ? BLANK_FLAG_ULP : BLANK_FLAG_LP;
+			ret = mdss_fb_blank_sub(flag, mfd->fbi,
 					mfd->suspend.op_enable);
 			if (ret) {
 				pr_err("can't turn off display!\n");
@@ -1680,6 +1691,10 @@ void mdss_fb_set_backlight(struct msm_fb_data_type *mfd, u32 bkl_lvl)
 		mfd->unset_bl_level = mfd->bl_level;
 	} else {
 		mfd->unset_bl_level = U32_MAX;
+	}
+
+	if (mdss_fb_is_power_on_interactive(mfd) && mfd->bl_level){
+		mfd->unblank_bl_level = mfd->bl_level;
 	}
 
 	pdata = dev_get_platdata(&mfd->pdev->dev);
@@ -1956,8 +1971,12 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 			 * the backlight would remain 0 (0 is set in blank).
 			 * Hence resetting back to calibration mode value
 			 */
-			if (IS_CALIB_MODE_BL(mfd))
+			if (!IS_CALIB_MODE_BL(mfd)){
+				mdss_fb_set_backlight(mfd, mfd->unblank_bl_level);
+			}
+			else if (IS_CALIB_MODE_BL(mfd)){
 				mdss_fb_set_backlight(mfd, mfd->calib_mode_bl);
+			}
 			else if ((!mfd->panel_info->mipi.post_init_delay) &&
 				(mfd->unset_bl_level != U32_MAX))
 				mdss_fb_set_backlight(mfd, mfd->unset_bl_level);

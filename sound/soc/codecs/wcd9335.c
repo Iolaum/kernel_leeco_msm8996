@@ -151,6 +151,23 @@ static char on_demand_supply_name[][MAX_ON_DEMAND_SUPPLY_NAME_LENGTH] = {
 	"cdc-vdd-mic-bias",
 };
 
+static int enable_compander = 1;
+
+static int __init set_compander(char *compander)
+{
+	unsigned long input;
+	int ret;
+
+	ret = kstrtoul(compander, 0, &input);
+	if (ret)
+		return -EINVAL;
+
+	enable_compander = input;
+
+	return ret;
+}
+__setup("compander=", set_compander);
+
 enum {
 	POWER_COLLAPSE,
 	POWER_RESUME,
@@ -160,6 +177,11 @@ enum tasha_sido_voltage {
 	SIDO_VOLTAGE_SVS_MV = 950,
 	SIDO_VOLTAGE_NOMINAL_MV = 1100,
 };
+
+#ifdef CONFIG_VENDOR_LEECO
+extern bool letv_typec_plug_state;
+extern bool letv_typec_4_pole;
+#endif
 
 static enum codec_variant codec_ver;
 
@@ -667,6 +689,14 @@ static struct wcd_mbhc_register
 			  0, 0, 0, 0),
 	WCD_MBHC_REGISTER("WCD_MBHC_MUX_CTL",
 			  WCD9335_MBHC_CTL_2, 0x70, 4, 0),
+
+#ifdef CONFIG_VENDOR_LEECO
+	/* add for headset mic swap from IN2P to IN3P automaticly*/
+	WCD_MBHC_REGISTER("WCD_MBHC_HS_VREF_INP",
+			  WCD9335_MBHC_CTL_2, 0x70, 4, 0),
+	WCD_MBHC_REGISTER("WCD_MBHC_AMIC2_HOLD_EN",
+			  WCD9335_ANA_AMIC2, 0x20, 5, 0),
+#endif
 };
 
 static const struct wcd_mbhc_intr intr_ids = {
@@ -1484,14 +1514,36 @@ static int tasha_micbias_control(struct snd_soc_codec *codec,
 		if (tasha->micb_ref[micb_index] > 0)
 			tasha->micb_ref[micb_index]--;
 		if ((tasha->micb_ref[micb_index] == 0) &&
-		    (tasha->pullup_ref[micb_index] > 0))
+		    (tasha->pullup_ref[micb_index] > 0)) {
+#ifdef CONFIG_VENDOR_LEECO
+			if (letv_typec_4_pole && letv_typec_plug_state &&
+				(micb_num == MIC_BIAS_2)) {
+				snd_soc_update_bits(codec, micb_reg, 0xC0, 0xC0);
+				pr_info("1: letv_headset still pluged!!\n");
+			} else {
+				pr_info("1: micb disable, micb_num(%d)!!\n", micb_num);
+				snd_soc_update_bits(codec, micb_reg, 0xC0, 0x80);
+			}
+#else
 			snd_soc_update_bits(codec, micb_reg, 0xC0, 0x80);
-		else if ((tasha->micb_ref[micb_index] == 0) &&
+#endif
+		} else if ((tasha->micb_ref[micb_index] == 0) &&
 			 (tasha->pullup_ref[micb_index] == 0)) {
 			if (pre_off_event)
 				blocking_notifier_call_chain(&tasha->notifier,
 						pre_off_event, &tasha->mbhc);
+#ifdef CONFIG_VENDOR_LEECO
+			if (letv_typec_4_pole && letv_typec_plug_state &&
+				(micb_num == MIC_BIAS_2)) {
+				snd_soc_update_bits(codec, micb_reg, 0xC0, 0x40);
+				pr_info("2: letv_headset still pluged!!\n");
+			} else {
+				pr_info("2: micb disable, micb_num(%d)!!\n", micb_num);
+				snd_soc_update_bits(codec, micb_reg, 0xC0, 0x00);
+			}
+#else
 			snd_soc_update_bits(codec, micb_reg, 0xC0, 0x00);
+#endif
 			if (post_off_event)
 				blocking_notifier_call_chain(&tasha->notifier,
 						post_off_event, &tasha->mbhc);
@@ -3510,6 +3562,11 @@ static int tasha_set_compander(struct snd_kcontrol *kcontrol,
 		    kcontrol->private_value)->shift;
 	int value = ucontrol->value.integer.value[0];
 
+#ifdef CONFIG_SOUND_CONTROL
+	if (comp == COMPANDER_1 || comp == COMPANDER_2)
+		value = enable_compander;
+#endif
+
 	pr_debug("%s: Compander %d enable current %d, new %d\n",
 		 __func__, comp + 1, tasha->comp_enabled[comp], value);
 	tasha->comp_enabled[comp] = value;
@@ -5200,6 +5257,47 @@ static int tasha_codec_enable_swr(struct snd_soc_dapm_widget *w,
 
 	return 0;
 }
+
+#ifdef CONFIG_VENDOR_LEECO
+static int wcd_swr_low_power_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	return 0;
+}
+
+static int wcd_swr_low_power_put(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct tasha_priv *tasha = snd_soc_codec_get_drvdata(codec);
+
+	if (1 == ucontrol->value.integer.value[0]) {
+		pr_info("%s, enable!\n", __func__);
+		wcd9xxx_reg_update_bits(
+			&tasha->wcd9xxx->core_res,
+			WCD9335_TEST_DEBUG_NPL_DLY_TEST_1,
+			0x90, 0x10);
+		msleep(10);
+		wcd9xxx_reg_update_bits(
+			&tasha->wcd9xxx->core_res,
+			WCD9335_TEST_DEBUG_NPL_DLY_TEST_1,
+			0x90, 0x90);
+	} else {
+		pr_info("%s, disable!\n", __func__);
+		wcd9xxx_reg_update_bits(
+			&tasha->wcd9xxx->core_res,
+			WCD9335_TEST_DEBUG_NPL_DLY_TEST_1,
+			0x90, 0x10);
+		msleep(10);
+		wcd9xxx_reg_update_bits(
+			&tasha->wcd9xxx->core_res,
+			WCD9335_TEST_DEBUG_NPL_DLY_TEST_1,
+			0x90, 0x90);
+	}
+
+	return 0;
+}
+#endif
 
 static int tasha_codec_enable_mix_path(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
@@ -8868,6 +8966,11 @@ static const struct snd_kcontrol_new tasha_snd_controls[] = {
 	SOC_ENUM_EXT("GSM mode Enable", tasha_vbat_gsm_mode_enum,
 			tasha_vbat_gsm_mode_func_get,
 			tasha_vbat_gsm_mode_func_put),
+
+#ifdef CONFIG_VENDOR_LEECO
+	SOC_SINGLE_EXT("WCD9335_SWR_LOW_POWER", SND_SOC_NOPM, 23, 1, 0,
+		       wcd_swr_low_power_get, wcd_swr_low_power_put),
+#endif
 };
 
 static int tasha_put_dec_enum(struct snd_kcontrol *kcontrol,
@@ -9293,11 +9396,12 @@ static const struct soc_enum tasha_ear_pa_gain_enum =
 static const struct snd_kcontrol_new tasha_analog_gain_controls[] = {
 	SOC_ENUM_EXT("EAR PA Gain", tasha_ear_pa_gain_enum,
 		tasha_ear_pa_gain_get, tasha_ear_pa_gain_put),
-
+#ifndef CONFIG_SOUND_CONTROL
 	SOC_SINGLE_TLV("HPHL Volume", WCD9335_HPH_L_EN, 0, 20, 1,
 		line_gain),
 	SOC_SINGLE_TLV("HPHR Volume", WCD9335_HPH_R_EN, 0, 20, 1,
 		line_gain),
+#endif
 	SOC_SINGLE_TLV("LINEOUT1 Volume", WCD9335_DIFF_LO_LO1_COMPANDER,
 			3, 16, 1, line_gain),
 	SOC_SINGLE_TLV("LINEOUT2 Volume", WCD9335_DIFF_LO_LO2_COMPANDER,
@@ -13793,6 +13897,96 @@ static struct regulator *tasha_codec_find_ondemand_regulator(
 	return NULL;
 }
 
+#ifdef CONFIG_SOUND_CONTROL
+static struct snd_soc_codec *sound_control_codec_ptr;
+
+static ssize_t headphone_gain_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d %d\n",
+		snd_soc_read(sound_control_codec_ptr, WCD9335_CDC_RX1_RX_VOL_CTL),
+		snd_soc_read(sound_control_codec_ptr, WCD9335_CDC_RX2_RX_VOL_CTL)
+	);
+}
+
+static ssize_t headphone_gain_store(struct kobject *kobj,
+		struct kobj_attribute *attr, const char *buf, size_t count)
+{
+
+	int input_l, input_r;
+
+	sscanf(buf, "%d %d", &input_l, &input_r);
+
+	if (input_l < -84 || input_l > 20)
+		input_l = 0;
+
+	if (input_r < -84 || input_r > 20)
+		input_r = 0;
+
+	snd_soc_write(sound_control_codec_ptr, WCD9335_CDC_RX1_RX_VOL_MIX_CTL, input_l);
+	snd_soc_write(sound_control_codec_ptr, WCD9335_CDC_RX2_RX_VOL_MIX_CTL, input_r);
+	snd_soc_write(sound_control_codec_ptr, WCD9335_CDC_RX1_RX_VOL_CTL, input_l);
+	snd_soc_write(sound_control_codec_ptr, WCD9335_CDC_RX2_RX_VOL_CTL, input_r);
+
+	return count;
+}
+
+static struct kobj_attribute headphone_gain_attribute =
+	__ATTR(headphone_gain, 0664,
+		headphone_gain_show,
+		headphone_gain_store);
+
+static ssize_t headphone_pa_gain_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	u8 hph_l_gain = snd_soc_read(sound_control_codec_ptr, WCD9335_HPH_L_EN);
+	u8 hph_r_gain = snd_soc_read(sound_control_codec_ptr, WCD9335_HPH_R_EN);
+
+	return snprintf(buf, PAGE_SIZE, "%d %d\n",
+		hph_l_gain & 0x1F, hph_r_gain & 0x1F);
+}
+
+static ssize_t headphone_pa_gain_store(struct kobject *kobj,
+		struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	unsigned int input_l, input_r;
+	struct tasha_priv *tasha = snd_soc_codec_get_drvdata(sound_control_codec_ptr);
+
+	sscanf(buf, "%d %d", &input_l, &input_r);
+
+	if (input_l < 1 || input_l > 20)
+		input_l = 1;
+
+	if (input_r < 1 || input_r > 20)
+		input_r = 1;
+
+	snd_soc_update_bits(sound_control_codec_ptr, WCD9335_HPH_L_EN, 0x1f, input_l);
+	snd_soc_update_bits(sound_control_codec_ptr, WCD9335_HPH_R_EN, 0x1f, input_r);
+
+	tasha->hph_l_gain = input_l;
+	tasha->hph_r_gain = input_r;
+
+	return count;
+}
+
+static struct kobj_attribute headphone_pa_gain_attribute =
+	__ATTR(headphone_pa_gain, 0664,
+		headphone_pa_gain_show,
+		headphone_pa_gain_store);
+
+static struct attribute *sound_control_attrs[] = {
+		&headphone_gain_attribute.attr,
+		&headphone_pa_gain_attribute.attr,
+		NULL,
+};
+
+static struct attribute_group sound_control_attr_group = {
+		.attrs = sound_control_attrs,
+};
+
+static struct kobject *sound_control_kobj;
+#endif
+
 static int tasha_codec_probe(struct snd_soc_codec *codec)
 {
 	struct wcd9xxx *control;
@@ -13803,6 +13997,9 @@ static int tasha_codec_probe(struct snd_soc_codec *codec)
 	void *ptr = NULL;
 	struct regulator *supply;
 
+#ifdef CONFIG_SOUND_CONTROL
+	sound_control_codec_ptr = codec;
+#endif
 	control = dev_get_drvdata(codec->dev->parent);
 
 	dev_info(codec->dev, "%s()\n", __func__);
@@ -14551,6 +14748,21 @@ static int tasha_probe(struct platform_device *pdev)
 	tasha_update_reg_defaults(tasha);
 	schedule_work(&tasha->swr_add_devices_work);
 	tasha_get_codec_ver(tasha);
+
+#ifdef CONFIG_SOUND_CONTROL
+	sound_control_kobj = kobject_create_and_add("sound_control", kernel_kobj);
+	if (sound_control_kobj == NULL) {
+		pr_warn("%s kobject create failed!\n", __func__);
+        }
+
+	ret = sysfs_create_group(sound_control_kobj, &sound_control_attr_group);
+        if (ret) {
+		pr_warn("%s sysfs file create failed!\n", __func__);
+	}
+
+	if (enable_compander)
+		sysfs_remove_file(sound_control_kobj, &headphone_pa_gain_attribute.attr);
+#endif
 
 	dev_info(&pdev->dev, "%s: Tasha driver probe done\n", __func__);
 	return ret;

@@ -41,6 +41,15 @@ config FB_MSM_MDSS_MHL3
 	  i2c device acting as an HDMI to MHL bridge. Chip supports
 	  MHL 3.0 standard.
 
+config FB_MSM_MDSS_HDMI_MHL_SII6400
+     depends on FB_MSM_MDSS_HDMI_PANEL
+     bool 'MHL/WIHD SII6400 support '
+     default n
+     ---help---
+       Support the HDMI to MHL/WIHDconversion.
+       MHL (Mobile High-Definition Link) technology
+       uses USB connector to output HDMI content
+
 config FB_MSM_MDSS_DSI_CTRL_STATUS
 	tristate "DSI controller status check feature"
 	---help---
@@ -82,3 +91,12 @@ config FB_MSM_MDSS_FRC_DEBUG
 	frame rate control (FRC) debugging features to: Collect video frame
 	statistics and check whether its output pattern matches expected
 	cadence.
+
+config FB_MSM_MDSS_KCAL_CTRL
+	depends on FB_MSM_MDSS
+	bool "MDSS color control"
+	default n
+	---help---
+	  Enable sysfs for rgb/lut control for mdss-mdp display controllers
+	  in the MDSS sub-system.
+

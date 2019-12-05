@@ -4,6 +4,8 @@
 
 # Each configuration option enables a list of files.
 
+CFLAGS_KERNEL := -fno-strict-aliasing
+
 obj-$(CONFIG_INPUT)		+= input-core.o
 input-core-y := input.o input-compat.o input-mt.o ff-core.o
 
@@ -27,5 +29,9 @@ obj-$(CONFIG_INPUT_MISC)	+= misc/
 obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
 obj-$(CONFIG_INPUT_KEYRESET)	+= keyreset.o
 obj-$(CONFIG_INPUT_KEYCOMBO)	+= keycombo.o
+
+obj-$(CONFIG_INPUT_FPC1020)	+= fpc1020/
+obj-$(CONFIG_INPUT_GP5XX8)	+= goodixfp/
+
 obj-$(CONFIG_SENSORS_HALL)	+= hall_sensor.o
 obj-y	+= sensors/smi130/
